@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Neerdrishti – Sonar Calibration</title>
+
+<script src="paho-mqtt.js"></script>
+
+<style>
+body{
+  background:#050d12;
+  color:#0f0;
+  font-family:monospace;
+  text-align:center;
+}
+canvas{
+  background:#021;
+  border-radius:8px;
+  margin:8px;
+}
+.slider{
+  width:300px;
+}
+label{
+  display:block;
+  margin-top:8px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Neerdrishti – Live Sonar Calibration</h2>
+
+<p>
+Front: <span id="f">--</span> cm |
+Left: <span id="l">--</span> cm |
+Right: <span id="r">--</span> cm
+</p>
+
+<canvas id="radar" width="400" height="400"></canvas>
+
+<!-- ===== CALIBRATION PANEL ===== -->
+<div>
+  <h3>Angle Calibration (degrees)</h3>
+
+  <label>
+    Left Angle:
+    <input class="slider" type="range" min="-90" max="0" value="-30" id="angL">
+    <span id="angLVal">-30</span>
+  </label>
+
+  <label>
+    Front Angle:
+    <input class="slider" type="range" min="-20" max="20" value="0" id="angF">
+    <span id="angFVal">0</span>
+  </label>
+
+  <label>
+    Right Angle:
+    <input class="slider" type="range" min="0" max="90" value="30" id="angR">
+    <span id="angRVal">30</span>
+  </label>
+
+  <h3>Distance Calibration</h3>
+
+  <label>
+    Max Distance (cm):
+    <input class="slider" type="range" min="50" max="400" value="200" id="maxDist">
+    <span id="maxDistVal">200</span>
+  </label>
+
+  <label>
+    Zero Offset (cm):
+    <input class="slider" type="range" min="-20" max="20" value="0" id="offset">
+    <span id="offsetVal">0</span>
+  </label>
+</div>
+
+<script>
+// ================= CANVAS =================
+const radar = document.getElementById("radar").getContext("2d");
+let sweep = 0;
+
+// ================= DATA =================
+let smooth = { front:0, left:0, right:0 };
+const alpha = 0.25;
+
+function ema(prev, curr){
+  return alpha * curr + (1 - alpha) * prev;
+}
+
+// ================= CALIBRATION =================
+const angL = document.getElementById("angL");
+const angF = document.getElementById("angF");
+const angR = document.getElementById("angR");
+const maxDist = document.getElementById("maxDist");
+const offset = document.getElementById("offset");
+
+function updateLabels(){
+  angLVal.innerText = angL.value;
+  angFVal.innerText = angF.value;
+  angRVal.innerText = angR.value;
+  maxDistVal.innerText = maxDist.value;
+  offsetVal.innerText = offset.value;
+}
+updateLabels();
+
+document.querySelectorAll("input").forEach(i=>{
+  i.oninput = updateLabels;
+});
+
+// ================= MAPPING =================
+function scale(cm){
+  const corrected = cm + Number(offset.value);
+  return Math.min(180, (corrected / maxDist.value) * 180);
+}
+
+function polar(angleDeg, distPx){
+  const rad = angleDeg * Math.PI / 180;
+  return { x: distPx * Math.cos(rad), y: distPx * Math.sin(rad) };
+}
+
+// ================= DRAW =================
+function draw(){
+  radar.fillStyle = "rgba(0,0,0,0.18)";
+  radar.fillRect(0,0,400,400);
+
+  radar.strokeStyle = "#0f0";
+  radar.beginPath();
+  radar.arc(200,200,180,0,Math.PI*2);
+  radar.stroke();
+
+  sweep += 0.035;
+  radar.strokeStyle = "rgba(0,255,0,0.6)";
+  radar.beginPath();
+  radar.moveTo(200,200);
+  radar.lineTo(
+    200 + 180*Math.cos(sweep),
+    200 + 180*Math.sin(sweep)
+  );
+  radar.stroke();
+
+  radar.fillStyle = "#00ff00";
+
+  [
+    ["left",  angL.value],
+    ["front", angF.value],
+    ["right", angR.value]
+  ].forEach(s=>{
+    const d = scale(smooth[s[0]]);
+    const p = polar(s[1], d);
+    radar.fillRect(200 + p.x, 200 + p.y, 8, 8);
+  });
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+// ================= MQTT =================
+const client = new Paho.Client(
+  "4d679eb8c29c4e029130d4045c0c1a2e.s1.eu.hivemq.cloud",
+  8884,
+  "/mqtt",
+  "web_" + Math.random().toString(16).slice(2)
+);
+
+client.onMessageArrived = m=>{
+  const j = JSON.parse(m.payloadString);
+
+  smooth.front = ema(smooth.front, Number(j.front));
+  smooth.left  = ema(smooth.left,  Number(j.left));
+  smooth.right = ema(smooth.right, Number(j.right));
+
+  f.innerText = Math.round(smooth.front);
+  l.innerText = Math.round(smooth.left);
+  r.innerText = Math.round(smooth.right);
+};
+
+client.connect({
+  useSSL:true,
+  userName:"neerdrishti",
+  password:"Neerdrishti123",
+  onSuccess:()=>client.subscribe("neerdrishti/sonar/map"),
+  onFailure:e=>console.error(e)
+});
+</script>
+
+</body>
+</html>
