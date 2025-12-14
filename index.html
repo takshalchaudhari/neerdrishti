@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – Sonar Mapping System</title>
+<title>Neerdrishti – Phase 3 Motion Mapping</title>
 
 <script src="paho-mqtt.js"></script>
 
@@ -26,7 +26,7 @@ button{ margin:4px; }
 
 <body>
 
-<h2>Neerdrishti – Sonar Mapping System</h2>
+<h2>Neerdrishti – Phase 3: Motion & Mapping</h2>
 
 <p>
 Front: <span id="f">--</span> cm |
@@ -42,8 +42,8 @@ Right: <span id="r">--</span> cm
   <h3>Calibration</h3>
 
   <label>Left Angle
-    <input class="slider" type="range" min="-90" max="0" value="-30" id="angL">
-    <span id="angLVal">-30</span>
+    <input class="slider" type="range" min="-90" max="0" value="-35" id="angL">
+    <span id="angLVal">-35</span>
   </label>
 
   <label>Front Angle
@@ -52,8 +52,8 @@ Right: <span id="r">--</span> cm
   </label>
 
   <label>Right Angle
-    <input class="slider" type="range" min="0" max="90" value="30" id="angR">
-    <span id="angRVal">30</span>
+    <input class="slider" type="range" min="0" max="90" value="35" id="angR">
+    <span id="angRVal">35</span>
   </label>
 
   <label>Max Distance (cm)
@@ -80,59 +80,59 @@ Right: <span id="r">--</span> cm
 const radar = document.getElementById("radar").getContext("2d");
 const map   = document.getElementById("map").getContext("2d");
 
-// ================= DATA =================
-let sweep = 0;
+// ================= SENSOR DATA =================
 let smooth = { front:0, left:0, right:0 };
 const alpha = 0.25;
+function ema(p,c){ return alpha*c+(1-alpha)*p; }
 
-function ema(prev, curr){
-  return alpha * curr + (1 - alpha) * prev;
-}
-
-// ================= POSE =================
+// ================= POSE & MOTION =================
 let pose = { x:200, y:240, theta:0 };
+let velocity = 0;
+let omega = 0;
+
+const SPEED = 2.0;        // translation speed
+const TURN  = 0.05;       // rotation speed
 
 // ================= CALIBRATION =================
-const angL = document.getElementById("angL");
-const angF = document.getElementById("angF");
-const angR = document.getElementById("angR");
-const maxDist = document.getElementById("maxDist");
-const offset = document.getElementById("offset");
+const angL = angL;
+const angF = angF;
+const angR = angR;
+const maxDist = maxDist;
+const offset = offset;
 
 function updateLabels(){
-  angLVal.innerText = angL.value;
-  angFVal.innerText = angF.value;
-  angRVal.innerText = angR.value;
-  maxDistVal.innerText = maxDist.value;
-  offsetVal.innerText = offset.value;
+  angLVal.innerText=angL.value;
+  angFVal.innerText=angF.value;
+  angRVal.innerText=angR.value;
+  maxDistVal.innerText=maxDist.value;
+  offsetVal.innerText=offset.value;
 }
-document.querySelectorAll("input").forEach(i=>i.oninput = updateLabels);
+document.querySelectorAll("input").forEach(i=>i.oninput=updateLabels);
 updateLabels();
 
-// ================= SCALING & POLAR =================
+// ================= MATH =================
 function scale(cm){
   const c = cm + Number(offset.value);
-  return Math.min(180, (c / maxDist.value) * 180);
+  return Math.min(180,(c/maxDist.value)*180);
 }
 function polar(a,d){
-  const r = a*Math.PI/180;
-  return { x:d*Math.cos(r), y:d*Math.sin(r) };
+  const r=a*Math.PI/180;
+  return {x:d*Math.cos(r),y:d*Math.sin(r)};
 }
 
 // ================= GRID =================
-const GRID_W=40, GRID_H=25, CELL=10, DECAY=0.992;
-let grid = Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
+const GRID_W=40, GRID_H=25, CELL=6, DECAY=0.992;
+let grid=Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
 
 function updateGrid(x,y){
-  const gx=Math.floor(x/CELL), gy=Math.floor(y/CELL);
+  const gx=Math.floor(x/CELL),gy=Math.floor(y/CELL);
   if(gx>=0&&gx<GRID_W&&gy>=0&&gy<GRID_H)
     grid[gy][gx]=Math.min(1,grid[gy][gx]+0.25);
 }
-
 function drawGrid(){
   map.fillStyle="#011";
   map.fillRect(0,0,400,250);
-  for(let y=0;y<GRID_H;y++){
+  for(let y=0;y<GRID_H;y++)
     for(let x=0;x<GRID_W;x++){
       grid[y][x]*=DECAY;
       if(grid[y][x]>0.05){
@@ -140,7 +140,6 @@ function drawGrid(){
         map.fillRect(x*CELL,y*CELL,CELL,CELL);
       }
     }
-  }
 }
 
 // ================= ROBOT =================
@@ -149,7 +148,6 @@ function drawRobot(){
   map.beginPath();
   map.arc(pose.x,pose.y,6,0,Math.PI*2);
   map.fill();
-
   map.beginPath();
   map.moveTo(pose.x,pose.y);
   map.lineTo(
@@ -159,23 +157,26 @@ function drawRobot(){
   map.stroke();
 }
 
-// ================= DRAW LOOP =================
+// ================= DRAW =================
+let sweep=0;
 function draw(){
+  // ---- MOTION UPDATE ----
+  pose.theta += omega;
+  pose.x += velocity * Math.sin(pose.theta);
+  pose.y -= velocity * Math.cos(pose.theta);
+
+  // ---- RADAR ----
   radar.fillStyle="rgba(0,0,0,0.18)";
   radar.fillRect(0,0,400,400);
-
   radar.strokeStyle="#0f0";
   radar.beginPath();
   radar.arc(200,200,180,0,Math.PI*2);
   radar.stroke();
 
-  sweep+=0.035;
+  sweep+=0.04;
   radar.beginPath();
   radar.moveTo(200,200);
-  radar.lineTo(
-    200+180*Math.cos(sweep),
-    200+180*Math.sin(sweep)
-  );
+  radar.lineTo(200+180*Math.cos(sweep),200+180*Math.sin(sweep));
   radar.stroke();
 
   [["left",angL.value],["front",angF.value],["right",angR.value]].forEach(s=>{
@@ -191,25 +192,26 @@ function draw(){
 }
 draw();
 
+// ================= KEYBOARD =================
+window.addEventListener("keydown",e=>{
+  if(e.key==="w"||e.key==="ArrowUp") velocity=SPEED;
+  if(e.key==="s"||e.key==="ArrowDown") velocity=-SPEED;
+  if(e.key==="a"||e.key==="ArrowLeft") omega=-TURN;
+  if(e.key==="d"||e.key==="ArrowRight") omega=TURN;
+  if(e.key===" ") velocity=omega=0;
+});
+window.addEventListener("keyup",e=>{
+  if(["w","s","ArrowUp","ArrowDown"].includes(e.key)) velocity=0;
+  if(["a","d","ArrowLeft","ArrowRight"].includes(e.key)) omega=0;
+});
+
 // ================= SAVE / LOAD =================
 function saveState(){
-  localStorage.setItem("neerdrishti_state",JSON.stringify({
-    cal:{angL:angL.value,angF:angF.value,angR:angR.value,maxDist:maxDist.value,offset:offset.value},
-    grid:grid
-  }));
+  localStorage.setItem("neerdrishti_state",JSON.stringify({grid:grid}));
 }
 function loadState(){
   const s=JSON.parse(localStorage.getItem("neerdrishti_state"));
-  if(!s) return;
-  Object.assign(grid,s.grid);
-  Object.assign({},
-    angL.value=s.cal.angL,
-    angF.value=s.cal.angF,
-    angR.value=s.cal.angR,
-    maxDist.value=s.cal.maxDist,
-    offset.value=s.cal.offset
-  );
-  updateLabels();
+  if(s) grid=s.grid;
 }
 function clearMap(){
   grid=Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
@@ -223,13 +225,12 @@ function exportPNG(){
   a.click();
 }
 function exportCSV(){
-  const csv=grid.map(r=>r.map(v=>v.toFixed(2)).join(",")).join("\n");
+  const csv=grid.map(r=>r.join(",")).join("\n");
   const b=new Blob([csv],{type:"text/csv"});
   const a=document.createElement("a");
   a.href=URL.createObjectURL(b);
   a.download="neerdrishti_grid.csv";
   a.click();
-  URL.revokeObjectURL(a.href);
 }
 
 // ================= MQTT =================
@@ -238,24 +239,21 @@ const client=new Paho.Client(
   8884,"/mqtt",
   "web_"+Math.random().toString(16).slice(2)
 );
-
 client.onMessageArrived=m=>{
   const j=JSON.parse(m.payloadString);
-  smooth.front=ema(smooth.front,Number(j.front));
-  smooth.left =ema(smooth.left ,Number(j.left));
-  smooth.right=ema(smooth.right,Number(j.right));
+  smooth.front=ema(smooth.front,j.front);
+  smooth.left =ema(smooth.left ,j.left);
+  smooth.right=ema(smooth.right,j.right);
   f.innerText=Math.round(smooth.front);
   l.innerText=Math.round(smooth.left);
   r.innerText=Math.round(smooth.right);
 };
-
 client.connect({
   useSSL:true,
   userName:"neerdrishti",
   password:"Neerdrishti123",
   onSuccess:()=>client.subscribe("neerdrishti/sonar/map")
 });
-
 loadState();
 </script>
 
