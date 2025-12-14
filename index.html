@@ -2,14 +2,13 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – 2D + 3D Sonar Mapping</title>
+<title>Neerdrishti – 2D & 3D Sonar Mapping</title>
 
 <!-- MQTT -->
 <script src="paho-mqtt.js"></script>
 
-<!-- THREE.JS -->
+<!-- THREE.JS (stable non-module build) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/controls/OrbitControls.js"></script>
 
 <style>
 body{
@@ -87,7 +86,7 @@ const alpha = 0.25;
 function ema(p,c){ return alpha*c + (1-alpha)*p; }
 
 // =================================================
-// POSE (STATIC FOR MAPPING)
+// POSE (STATIC – CORRECT FOR NOW)
 // =================================================
 const pose = { x:200, y:240, theta:0 };
 
@@ -170,22 +169,34 @@ const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(400,400);
 panel3d.appendChild(renderer.domElement);
 
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+// ---- Manual mouse control (NO OrbitControls) ----
+let isDragging=false, prevX=0, prevY=0, rotX=0, rotY=0;
 
+renderer.domElement.addEventListener("mousedown",e=>{
+  isDragging=true; prevX=e.clientX; prevY=e.clientY;
+});
+window.addEventListener("mouseup",()=>isDragging=false);
+window.addEventListener("mousemove",e=>{
+  if(!isDragging) return;
+  rotY += (e.clientX-prevX)*0.005;
+  rotX += (e.clientY-prevY)*0.005;
+  prevX=e.clientX; prevY=e.clientY;
+});
+renderer.domElement.addEventListener("wheel",e=>{
+  camera.position.z += e.deltaY*0.1;
+});
+
+// ---- Point cloud ----
 const geometry = new THREE.BufferGeometry();
 const positions = [];
-geometry.setAttribute(
-  "position",
+geometry.setAttribute("position",
   new THREE.Float32BufferAttribute(positions,3)
 );
-
 const material = new THREE.PointsMaterial({color:0x00ff00,size:4});
-const points = new THREE.Points(geometry, material);
+const points = new THREE.Points(geometry,material);
 scene.add(points);
 
 let zStack=0;
-
 function add3DPoint(angle,dist){
   const r=angle*Math.PI/180;
   positions.push(
@@ -193,13 +204,14 @@ function add3DPoint(angle,dist){
     dist*Math.sin(r),
     zStack
   );
-  geometry.attributes.position.needsUpdate = true;
+  geometry.attributes.position.needsUpdate=true;
 }
 
 function animate3D(){
-  zStack += 0.3;
+  zStack+=0.3;
+  scene.rotation.x=rotX;
+  scene.rotation.y=rotY;
   renderer.render(scene,camera);
-  controls.update();
   requestAnimationFrame(animate3D);
 }
 animate3D();
@@ -207,27 +219,25 @@ animate3D();
 // =================================================
 // MQTT
 // =================================================
-const client = new Paho.Client(
+const client=new Paho.Client(
   "4d679eb8c29c4e029130d4045c0c1a2e.s1.eu.hivemq.cloud",
-  8884,
-  "/mqtt",
+  8884,"/mqtt",
   "web_"+Math.random().toString(16).slice(2)
 );
 
-client.onMessageArrived = m=>{
-  const j = JSON.parse(m.payloadString);
+client.onMessageArrived=m=>{
+  const j=JSON.parse(m.payloadString);
+  smooth.front=ema(smooth.front,j.front);
+  smooth.left =ema(smooth.left ,j.left);
+  smooth.right=ema(smooth.right,j.right);
 
-  smooth.front = ema(smooth.front, j.front);
-  smooth.left  = ema(smooth.left , j.left);
-  smooth.right = ema(smooth.right, j.right);
+  f.innerText=Math.round(smooth.front);
+  l.innerText=Math.round(smooth.left);
+  r.innerText=Math.round(smooth.right);
 
-  f.innerText = Math.round(smooth.front);
-  l.innerText = Math.round(smooth.left);
-  r.innerText = Math.round(smooth.right);
-
-  add3DPoint(0,   smooth.front);
-  add3DPoint(-35, smooth.left);
-  add3DPoint(35,  smooth.right);
+  add3DPoint(0,smooth.front);
+  add3DPoint(-35,smooth.left);
+  add3DPoint(35,smooth.right);
 };
 
 client.connect({
@@ -241,20 +251,20 @@ client.connect({
 // EXPORT
 // =================================================
 function clearMap(){
-  grid = Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
+  grid=Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
 }
 function exportPNG(){
   const a=document.createElement("a");
-  a.href = mapCanvas.toDataURL();
-  a.download = "neerdrishti_map.png";
+  a.href=mapCanvas.toDataURL();
+  a.download="neerdrishti_map.png";
   a.click();
 }
 function exportCSV(){
-  const csv = grid.map(r=>r.join(",")).join("\n");
-  const b = new Blob([csv],{type:"text/csv"});
+  const csv=grid.map(r=>r.join(",")).join("\n");
+  const b=new Blob([csv],{type:"text/csv"});
   const a=document.createElement("a");
-  a.href = URL.createObjectURL(b);
-  a.download = "neerdrishti_grid.csv";
+  a.href=URL.createObjectURL(b);
+  a.download="neerdrishti_grid.csv";
   a.click();
 }
 </script>
