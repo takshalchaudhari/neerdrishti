@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – Sonar Calibration</title>
+<title>Neerdrishti – Sonar Mapping System</title>
 
 <script src="paho-mqtt.js"></script>
 
@@ -18,19 +18,15 @@ canvas{
   border-radius:8px;
   margin:8px;
 }
-.slider{
-  width:300px;
-}
-label{
-  display:block;
-  margin-top:8px;
-}
+.slider{ width:300px; }
+label{ display:block; margin-top:6px; }
+button{ margin:4px; }
 </style>
 </head>
 
 <body>
 
-<h2>Neerdrishti – Live Sonar Calibration</h2>
+<h2>Neerdrishti – Sonar Mapping System</h2>
 
 <p>
 Front: <span id="f">--</span> cm |
@@ -39,56 +35,62 @@ Right: <span id="r">--</span> cm
 </p>
 
 <canvas id="radar" width="400" height="400"></canvas>
+<canvas id="map" width="400" height="250"></canvas>
 
-<!-- ===== CALIBRATION PANEL ===== -->
+<!-- ===== CALIBRATION ===== -->
 <div>
-  <h3>Angle Calibration (degrees)</h3>
+  <h3>Calibration</h3>
 
-  <label>
-    Left Angle:
+  <label>Left Angle
     <input class="slider" type="range" min="-90" max="0" value="-30" id="angL">
     <span id="angLVal">-30</span>
   </label>
 
-  <label>
-    Front Angle:
+  <label>Front Angle
     <input class="slider" type="range" min="-20" max="20" value="0" id="angF">
     <span id="angFVal">0</span>
   </label>
 
-  <label>
-    Right Angle:
+  <label>Right Angle
     <input class="slider" type="range" min="0" max="90" value="30" id="angR">
     <span id="angRVal">30</span>
   </label>
 
-  <h3>Distance Calibration</h3>
-
-  <label>
-    Max Distance (cm):
+  <label>Max Distance (cm)
     <input class="slider" type="range" min="50" max="400" value="200" id="maxDist">
     <span id="maxDistVal">200</span>
   </label>
 
-  <label>
-    Zero Offset (cm):
+  <label>Zero Offset (cm)
     <input class="slider" type="range" min="-20" max="20" value="0" id="offset">
     <span id="offsetVal">0</span>
   </label>
+
+  <div style="margin-top:10px;">
+    <button onclick="saveState()">💾 Save</button>
+    <button onclick="loadState()">📂 Load</button>
+    <button onclick="clearMap()">🧹 Clear Map</button>
+    <button onclick="exportPNG()">🖼 PNG</button>
+    <button onclick="exportCSV()">📄 CSV</button>
+  </div>
 </div>
 
 <script>
 // ================= CANVAS =================
 const radar = document.getElementById("radar").getContext("2d");
-let sweep = 0;
+const map   = document.getElementById("map").getContext("2d");
 
 // ================= DATA =================
+let sweep = 0;
 let smooth = { front:0, left:0, right:0 };
 const alpha = 0.25;
 
 function ema(prev, curr){
   return alpha * curr + (1 - alpha) * prev;
 }
+
+// ================= POSE =================
+let pose = { x:200, y:240, theta:0 };
 
 // ================= CALIBRATION =================
 const angL = document.getElementById("angL");
@@ -104,86 +106,157 @@ function updateLabels(){
   maxDistVal.innerText = maxDist.value;
   offsetVal.innerText = offset.value;
 }
+document.querySelectorAll("input").forEach(i=>i.oninput = updateLabels);
 updateLabels();
 
-document.querySelectorAll("input").forEach(i=>{
-  i.oninput = updateLabels;
-});
-
-// ================= MAPPING =================
+// ================= SCALING & POLAR =================
 function scale(cm){
-  const corrected = cm + Number(offset.value);
-  return Math.min(180, (corrected / maxDist.value) * 180);
+  const c = cm + Number(offset.value);
+  return Math.min(180, (c / maxDist.value) * 180);
+}
+function polar(a,d){
+  const r = a*Math.PI/180;
+  return { x:d*Math.cos(r), y:d*Math.sin(r) };
 }
 
-function polar(angleDeg, distPx){
-  const rad = angleDeg * Math.PI / 180;
-  return { x: distPx * Math.cos(rad), y: distPx * Math.sin(rad) };
+// ================= GRID =================
+const GRID_W=40, GRID_H=25, CELL=10, DECAY=0.992;
+let grid = Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
+
+function updateGrid(x,y){
+  const gx=Math.floor(x/CELL), gy=Math.floor(y/CELL);
+  if(gx>=0&&gx<GRID_W&&gy>=0&&gy<GRID_H)
+    grid[gy][gx]=Math.min(1,grid[gy][gx]+0.25);
 }
 
-// ================= DRAW =================
+function drawGrid(){
+  map.fillStyle="#011";
+  map.fillRect(0,0,400,250);
+  for(let y=0;y<GRID_H;y++){
+    for(let x=0;x<GRID_W;x++){
+      grid[y][x]*=DECAY;
+      if(grid[y][x]>0.05){
+        map.fillStyle=`rgba(0,255,0,${grid[y][x]})`;
+        map.fillRect(x*CELL,y*CELL,CELL,CELL);
+      }
+    }
+  }
+}
+
+// ================= ROBOT =================
+function drawRobot(){
+  map.fillStyle="#0f0";
+  map.beginPath();
+  map.arc(pose.x,pose.y,6,0,Math.PI*2);
+  map.fill();
+
+  map.beginPath();
+  map.moveTo(pose.x,pose.y);
+  map.lineTo(
+    pose.x+15*Math.sin(pose.theta),
+    pose.y-15*Math.cos(pose.theta)
+  );
+  map.stroke();
+}
+
+// ================= DRAW LOOP =================
 function draw(){
-  radar.fillStyle = "rgba(0,0,0,0.18)";
+  radar.fillStyle="rgba(0,0,0,0.18)";
   radar.fillRect(0,0,400,400);
 
-  radar.strokeStyle = "#0f0";
+  radar.strokeStyle="#0f0";
   radar.beginPath();
   radar.arc(200,200,180,0,Math.PI*2);
   radar.stroke();
 
-  sweep += 0.035;
-  radar.strokeStyle = "rgba(0,255,0,0.6)";
+  sweep+=0.035;
   radar.beginPath();
   radar.moveTo(200,200);
   radar.lineTo(
-    200 + 180*Math.cos(sweep),
-    200 + 180*Math.sin(sweep)
+    200+180*Math.cos(sweep),
+    200+180*Math.sin(sweep)
   );
   radar.stroke();
 
-  radar.fillStyle = "#00ff00";
-
-  [
-    ["left",  angL.value],
-    ["front", angF.value],
-    ["right", angR.value]
-  ].forEach(s=>{
-    const d = scale(smooth[s[0]]);
-    const p = polar(s[1], d);
-    radar.fillRect(200 + p.x, 200 + p.y, 8, 8);
+  [["left",angL.value],["front",angF.value],["right",angR.value]].forEach(s=>{
+    const d=scale(smooth[s[0]]);
+    const p=polar(s[1],d);
+    radar.fillRect(200+p.x,200+p.y,8,8);
+    updateGrid(pose.x+p.x,pose.y-p.y);
   });
 
+  drawGrid();
+  drawRobot();
   requestAnimationFrame(draw);
 }
 draw();
 
+// ================= SAVE / LOAD =================
+function saveState(){
+  localStorage.setItem("neerdrishti_state",JSON.stringify({
+    cal:{angL:angL.value,angF:angF.value,angR:angR.value,maxDist:maxDist.value,offset:offset.value},
+    grid:grid
+  }));
+}
+function loadState(){
+  const s=JSON.parse(localStorage.getItem("neerdrishti_state"));
+  if(!s) return;
+  Object.assign(grid,s.grid);
+  Object.assign({},
+    angL.value=s.cal.angL,
+    angF.value=s.cal.angF,
+    angR.value=s.cal.angR,
+    maxDist.value=s.cal.maxDist,
+    offset.value=s.cal.offset
+  );
+  updateLabels();
+}
+function clearMap(){
+  grid=Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
+}
+
+// ================= EXPORT =================
+function exportPNG(){
+  const a=document.createElement("a");
+  a.href=document.getElementById("map").toDataURL();
+  a.download="neerdrishti_map.png";
+  a.click();
+}
+function exportCSV(){
+  const csv=grid.map(r=>r.map(v=>v.toFixed(2)).join(",")).join("\n");
+  const b=new Blob([csv],{type:"text/csv"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(b);
+  a.download="neerdrishti_grid.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 // ================= MQTT =================
-const client = new Paho.Client(
+const client=new Paho.Client(
   "4d679eb8c29c4e029130d4045c0c1a2e.s1.eu.hivemq.cloud",
-  8884,
-  "/mqtt",
-  "web_" + Math.random().toString(16).slice(2)
+  8884,"/mqtt",
+  "web_"+Math.random().toString(16).slice(2)
 );
 
-client.onMessageArrived = m=>{
-  const j = JSON.parse(m.payloadString);
-
-  smooth.front = ema(smooth.front, Number(j.front));
-  smooth.left  = ema(smooth.left,  Number(j.left));
-  smooth.right = ema(smooth.right, Number(j.right));
-
-  f.innerText = Math.round(smooth.front);
-  l.innerText = Math.round(smooth.left);
-  r.innerText = Math.round(smooth.right);
+client.onMessageArrived=m=>{
+  const j=JSON.parse(m.payloadString);
+  smooth.front=ema(smooth.front,Number(j.front));
+  smooth.left =ema(smooth.left ,Number(j.left));
+  smooth.right=ema(smooth.right,Number(j.right));
+  f.innerText=Math.round(smooth.front);
+  l.innerText=Math.round(smooth.left);
+  r.innerText=Math.round(smooth.right);
 };
 
 client.connect({
   useSSL:true,
   userName:"neerdrishti",
   password:"Neerdrishti123",
-  onSuccess:()=>client.subscribe("neerdrishti/sonar/map"),
-  onFailure:e=>console.error(e)
+  onSuccess:()=>client.subscribe("neerdrishti/sonar/map")
 });
+
+loadState();
 </script>
 
 </body>
