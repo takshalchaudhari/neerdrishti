@@ -2,11 +2,14 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – 2D & 3D Sonar Mapping</title>
+<title>Neerdrishti – 2D + 3D Sonar Mapping</title>
 
+<!-- MQTT -->
 <script src="paho-mqtt.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+
+<!-- THREE.JS -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/controls/OrbitControls.js"></script>
 
 <style>
 body{
@@ -20,8 +23,8 @@ canvas{
   border-radius:8px;
   margin:6px;
 }
-button{margin:4px}
-.hidden{display:none}
+button{ margin:4px; }
+.hidden{ display:none; }
 </style>
 </head>
 
@@ -40,11 +43,10 @@ Left: <span id="l">--</span> |
 Right: <span id="r">--</span>
 </p>
 
-<!-- ========== 2D PANEL ========== -->
+<!-- ================= 2D PANEL ================= -->
 <div id="panel2d">
   <canvas id="radar" width="400" height="400"></canvas>
   <canvas id="map" width="400" height="250"></canvas>
-
   <div>
     <button onclick="clearMap()">Clear</button>
     <button onclick="exportPNG()">PNG</button>
@@ -52,11 +54,13 @@ Right: <span id="r">--</span>
   </div>
 </div>
 
-<!-- ========== 3D PANEL ========== -->
+<!-- ================= 3D PANEL ================= -->
 <div id="panel3d" class="hidden"></div>
 
 <script>
-// ================= VIEW TOGGLE =================
+// =================================================
+// VIEW TOGGLE
+// =================================================
 function show2D(){
   panel2d.classList.remove("hidden");
   panel3d.classList.add("hidden");
@@ -66,32 +70,44 @@ function show3D(){
   panel2d.classList.add("hidden");
 }
 
-// ================= 2D CANVAS =================
-const radar = radar.getContext("2d");
-const map   = map.getContext("2d");
+// =================================================
+// CANVAS CONTEXTS (FIXED)
+// =================================================
+const radarCanvas = document.getElementById("radar");
+const mapCanvas   = document.getElementById("map");
 
-// ================= SENSOR DATA =================
-let smooth={front:0,left:0,right:0};
-const alpha=0.25;
-function ema(p,c){return alpha*c+(1-alpha)*p;}
+const radar = radarCanvas.getContext("2d");
+const map   = mapCanvas.getContext("2d");
 
-// ================= POSE (STATIC FOR NOW) =================
-const pose={x:200,y:240,theta:0};
+// =================================================
+// SENSOR DATA
+// =================================================
+let smooth = { front:0, left:0, right:0 };
+const alpha = 0.25;
+function ema(p,c){ return alpha*c + (1-alpha)*p; }
 
-// ================= GRID =================
-const GRID_W=40,GRID_H=25,CELL=6,DECAY=0.992;
-let grid=Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
+// =================================================
+// POSE (STATIC FOR MAPPING)
+// =================================================
+const pose = { x:200, y:240, theta:0 };
+
+// =================================================
+// GRID
+// =================================================
+const GRID_W=40, GRID_H=25, CELL=6, DECAY=0.992;
+let grid = Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
 
 function updateGrid(x,y){
-  const gx=Math.floor(x/CELL),gy=Math.floor(y/CELL);
-  if(gx>=0&&gx<GRID_W&&gy>=0&&gy<GRID_H)
-    grid[gy][gx]=Math.min(1,grid[gy][gx]+0.3);
+  const gx=Math.floor(x/CELL), gy=Math.floor(y/CELL);
+  if(gx>=0 && gx<GRID_W && gy>=0 && gy<GRID_H){
+    grid[gy][gx] = Math.min(1, grid[gy][gx] + 0.3);
+  }
 }
 
 function drawGrid(){
   map.fillStyle="#011";
   map.fillRect(0,0,400,250);
-  for(let y=0;y<GRID_H;y++)
+  for(let y=0;y<GRID_H;y++){
     for(let x=0;x<GRID_W;x++){
       grid[y][x]*=DECAY;
       if(grid[y][x]>0.05){
@@ -99,18 +115,22 @@ function drawGrid(){
         map.fillRect(x*CELL,y*CELL,CELL,CELL);
       }
     }
+  }
 }
 
-// ================= RADAR =================
+// =================================================
+// RADAR
+// =================================================
 let sweep=0;
 function polar(a,d){
   const r=a*Math.PI/180;
-  return {x:d*Math.cos(r),y:d*Math.sin(r)};
+  return { x:d*Math.cos(r), y:d*Math.sin(r) };
 }
 
 function draw2D(){
-  radar.fillStyle="rgba(0,0,0,0.2)";
+  radar.fillStyle="rgba(0,0,0,0.25)";
   radar.fillRect(0,0,400,400);
+
   radar.strokeStyle="#0f0";
   radar.beginPath();
   radar.arc(200,200,180,0,Math.PI*2);
@@ -119,14 +139,17 @@ function draw2D(){
   sweep+=0.04;
   radar.beginPath();
   radar.moveTo(200,200);
-  radar.lineTo(200+180*Math.cos(sweep),200+180*Math.sin(sweep));
+  radar.lineTo(
+    200+180*Math.cos(sweep),
+    200+180*Math.sin(sweep)
+  );
   radar.stroke();
 
   [["left",-35],["front",0],["right",35]].forEach(s=>{
-    const d=smooth[s[0]];
-    const p=polar(s[1],d);
+    const d = smooth[s[0]];
+    const p = polar(s[1], d);
     radar.fillRect(200+p.x,200+p.y,6,6);
-    updateGrid(pose.x+p.x,pose.y-p.y);
+    updateGrid(pose.x+p.x, pose.y-p.y);
   });
 
   drawGrid();
@@ -134,25 +157,31 @@ function draw2D(){
 }
 draw2D();
 
-// ================= 3D SCENE =================
-const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x050d12);
+// =================================================
+// 3D SCENE (POINT CLOUD)
+// =================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050d12);
 
-const camera=new THREE.PerspectiveCamera(60,1,1,2000);
+const camera = new THREE.PerspectiveCamera(60,1,1,2000);
 camera.position.set(0,150,300);
 
-const renderer=new THREE.WebGLRenderer({antialias:true});
+const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(400,400);
 panel3d.appendChild(renderer.domElement);
 
-const controls=new THREE.OrbitControls(camera,renderer.domElement);
-controls.enableDamping=true;
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
 
-const geometry=new THREE.BufferGeometry();
-const positions=[];
-geometry.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));
-const material=new THREE.PointsMaterial({color:0x00ff00,size:4});
-const points=new THREE.Points(geometry,material);
+const geometry = new THREE.BufferGeometry();
+const positions = [];
+geometry.setAttribute(
+  "position",
+  new THREE.Float32BufferAttribute(positions,3)
+);
+
+const material = new THREE.PointsMaterial({color:0x00ff00,size:4});
+const points = new THREE.Points(geometry, material);
 scene.add(points);
 
 let zStack=0;
@@ -164,38 +193,41 @@ function add3DPoint(angle,dist){
     dist*Math.sin(r),
     zStack
   );
-  geometry.attributes.position.needsUpdate=true;
+  geometry.attributes.position.needsUpdate = true;
 }
 
 function animate3D(){
-  zStack+=0.4;
+  zStack += 0.3;
   renderer.render(scene,camera);
   controls.update();
   requestAnimationFrame(animate3D);
 }
 animate3D();
 
-// ================= MQTT =================
-const client=new Paho.Client(
+// =================================================
+// MQTT
+// =================================================
+const client = new Paho.Client(
   "4d679eb8c29c4e029130d4045c0c1a2e.s1.eu.hivemq.cloud",
-  8884,"/mqtt",
+  8884,
+  "/mqtt",
   "web_"+Math.random().toString(16).slice(2)
 );
 
-client.onMessageArrived=m=>{
-  const j=JSON.parse(m.payloadString);
+client.onMessageArrived = m=>{
+  const j = JSON.parse(m.payloadString);
 
-  smooth.front=ema(smooth.front,j.front);
-  smooth.left =ema(smooth.left ,j.left);
-  smooth.right=ema(smooth.right,j.right);
+  smooth.front = ema(smooth.front, j.front);
+  smooth.left  = ema(smooth.left , j.left);
+  smooth.right = ema(smooth.right, j.right);
 
-  f.innerText=Math.round(smooth.front);
-  l.innerText=Math.round(smooth.left);
-  r.innerText=Math.round(smooth.right);
+  f.innerText = Math.round(smooth.front);
+  l.innerText = Math.round(smooth.left);
+  r.innerText = Math.round(smooth.right);
 
-  add3DPoint(0,smooth.front);
-  add3DPoint(-35,smooth.left);
-  add3DPoint(35,smooth.right);
+  add3DPoint(0,   smooth.front);
+  add3DPoint(-35, smooth.left);
+  add3DPoint(35,  smooth.right);
 };
 
 client.connect({
@@ -205,22 +237,24 @@ client.connect({
   onSuccess:()=>client.subscribe("neerdrishti/sonar/map")
 });
 
-// ================= EXPORT =================
+// =================================================
+// EXPORT
+// =================================================
 function clearMap(){
-  grid=Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
+  grid = Array.from({length:GRID_H},()=>Array(GRID_W).fill(0));
 }
 function exportPNG(){
   const a=document.createElement("a");
-  a.href=document.getElementById("map").toDataURL();
-  a.download="map.png";
+  a.href = mapCanvas.toDataURL();
+  a.download = "neerdrishti_map.png";
   a.click();
 }
 function exportCSV(){
-  const csv=grid.map(r=>r.join(",")).join("\n");
-  const b=new Blob([csv],{type:"text/csv"});
+  const csv = grid.map(r=>r.join(",")).join("\n");
+  const b = new Blob([csv],{type:"text/csv"});
   const a=document.createElement("a");
-  a.href=URL.createObjectURL(b);
-  a.download="grid.csv";
+  a.href = URL.createObjectURL(b);
+  a.download = "neerdrishti_grid.csv";
   a.click();
 }
 </script>
