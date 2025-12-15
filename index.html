@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – Filtered 2D + 3D Mapping</title>
+<title>Neerdrishti – Pose-Based Mapping</title>
 
 <script src="paho-mqtt.js"></script>
 
@@ -23,151 +23,111 @@ canvas{background:#021;border-radius:8px}
 
 <body>
 
-<h2>Neerdrishti – Phase 3-1 (Calibration + Filtering)</h2>
+<h2>Neerdrishti – Phase 3-2 (Pose Estimation)</h2>
 <p id="status">Connecting…</p>
 
-Front: <span id="f">--</span> |
-Left: <span id="l">--</span> |
-Right: <span id="r">--</span>
-
 <div id="panels">
-  <canvas id="radar" width="400" height="400"></canvas>
-  <canvas id="map" width="400" height="250"></canvas>
+  <canvas id="map" width="420" height="300"></canvas>
   <div id="three" style="width:420px;height:420px"></div>
 </div>
 
 <script type="module">
 /* ================= CONFIG ================= */
 
-// Calibration offsets (cm)
-const CAL = {
-  front: 0,
-  left:  0,
-  right: 0
-};
+// Motion model (simulated)
+const FORWARD_SPEED = 0.02;   // meters per update
+const TURN_RATE     = 0.002;  // radians per update
 
-// Valid distance window
-const MIN_CM = 15;
+// Sensor angles
+const ANGLES = {front:0,left:-30,right:30};
+
+// Calibration
+const CAL = {front:0,left:0,right:0};
+
+// Filtering
+const MIN_CM = 20;
 const MAX_CM = 300;
-
-// Filter parameters
 const MEDIAN_WINDOW = 5;
-const EMA_ALPHA = 0.35; // 0 = heavy smoothing, 1 = raw
+const EMA_ALPHA = 0.35;
 
 /* ================= STATE ================= */
 
-let raw = {front:0,left:0,right:0};
-let filt = {front:0,left:0,right:0};
-let ema  = {front:0,left:0,right:0};
+let pose = {x:0,y:0,theta:0};
+let history={front:[],left:[],right:[]};
+let ema={front:0,left:0,right:0};
+let lastMsg=0;
 
-const history = {
-  front:[], left:[], right:[]
-};
+/* ================= FILTER ================= */
 
-let lastMsg = 0;
-let sweep = 0;
+function median(a){return [...a].sort((x,y)=>x-y)[Math.floor(a.length/2)]}
 
-/* ================= FILTERS ================= */
-
-function median(arr){
-  const s = [...arr].sort((a,b)=>a-b);
-  return s[Math.floor(s.length/2)];
+function filter(name,v){
+  v+=CAL[name];
+  if(v<MIN_CM||v>MAX_CM) return null;
+  history[name].push(v);
+  if(history[name].length>MEDIAN_WINDOW) history[name].shift();
+  if(history[name].length<MEDIAN_WINDOW) return null;
+  const m=median(history[name]);
+  ema[name]=ema[name]?EMA_ALPHA*m+(1-EMA_ALPHA)*ema[name]:m;
+  return ema[name]/100; // convert cm → meters
 }
 
-function filter(name, value){
-  // Calibration
-  value += CAL[name];
+/* ================= POSE UPDATE ================= */
 
-  // Reject invalid
-  if(value < MIN_CM || value > MAX_CM) return null;
-
-  // Median window
-  history[name].push(value);
-  if(history[name].length > MEDIAN_WINDOW)
-    history[name].shift();
-
-  if(history[name].length < MEDIAN_WINDOW) return null;
-
-  const m = median(history[name]);
-
-  // EMA smoothing
-  ema[name] = ema[name]
-    ? EMA_ALPHA * m + (1-EMA_ALPHA) * ema[name]
-    : m;
-
-  return Math.round(ema[name]);
+function updatePose(){
+  pose.x += FORWARD_SPEED*Math.cos(pose.theta);
+  pose.y += FORWARD_SPEED*Math.sin(pose.theta);
+  pose.theta += TURN_RATE;
 }
 
-/* ================= 2D ================= */
+/* ================= 2D MAP ================= */
 
-const radar = document.getElementById("radar").getContext("2d");
-const map = document.getElementById("map").getContext("2d");
+const map=document.getElementById("map").getContext("2d");
+const worldPts=[];
 
-function polar(a,d){
-  const r = a*Math.PI/180;
-  return {x:d*Math.cos(r),y:d*Math.sin(r)};
-}
-
-function draw2D(){
-  radar.fillStyle="rgba(0,0,0,0.25)";
-  radar.fillRect(0,0,400,400);
-  radar.strokeStyle="#0f0";
-  radar.beginPath();
-  radar.arc(200,200,180,0,Math.PI*2);
-  radar.stroke();
-
-  sweep+=0.04;
-  radar.beginPath();
-  radar.moveTo(200,200);
-  radar.lineTo(200+180*Math.cos(sweep),200+180*Math.sin(sweep));
-  radar.stroke();
-
-  [["left",-30],["front",0],["right",30]].forEach(s=>{
-    if(!filt[s[0]]) return;
-    const p = polar(s[1],filt[s[0]]);
-    radar.fillRect(200+p.x/2,200+p.y/2,6,6);
-  });
-
+function drawMap(){
   map.fillStyle="#011";
-  map.fillRect(0,0,400,250);
+  map.fillRect(0,0,420,300);
 
-  [["left",-30],["front",0],["right",30]].forEach(s=>{
-    if(!filt[s[0]]) return;
-    const p = polar(s[1],filt[s[0]]);
-    map.fillRect(200+p.x/2,240-p.y/2,6,6);
+  // draw points
+  map.fillStyle="#0f0";
+  worldPts.forEach(p=>{
+    map.fillRect(210+p.x*20,150-p.y*20,3,3);
   });
 
-  requestAnimationFrame(draw2D);
+  // draw robot
+  map.fillStyle="#f00";
+  map.fillRect(210+pose.x*20,150-pose.y*20,6,6);
+
+  requestAnimationFrame(drawMap);
 }
-draw2D();
+drawMap();
 
 /* ================= 3D ================= */
 
-const container=document.getElementById("three");
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x020a0f);
 
-const camera=new THREE.PerspectiveCamera(60,1,1,2000);
-camera.position.set(0,120,220);
+const camera=new THREE.PerspectiveCamera(60,1,0.1,2000);
+camera.position.set(0,4,8);
 
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(420,420);
-container.appendChild(renderer.domElement);
+document.getElementById("three").appendChild(renderer.domElement);
 
 const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;
 
-scene.add(new THREE.GridHelper(400,20,0x00ff00,0x003300));
+scene.add(new THREE.GridHelper(20,20,0x00ff00,0x003300));
 
 const geom=new THREE.BufferGeometry();
 const pts=[];
-const mat=new THREE.PointsMaterial({color:0x00ff00,size:4});
+const mat=new THREE.PointsMaterial({color:0x00ff00,size:0.05});
 const cloud=new THREE.Points(geom,mat);
 scene.add(cloud);
 
-function add3D(a,d){
-  const r=a*Math.PI/180;
-  pts.push(d*Math.cos(r),0,-d*Math.sin(r));
+function add3D(x,y){
+  pts.push(x,0,-y);
   geom.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
 }
 
@@ -189,37 +149,39 @@ const client=new Paho.Client(
 
 client.onMessageArrived=m=>{
   const j=JSON.parse(m.payloadString);
-  raw=j;
   lastMsg=Date.now();
 
-  ["front","left","right"].forEach(k=>{
-    const v=filter(k,j[k]);
-    if(v){
-      filt[k]=v;
-      document.getElementById(k[0]).innerText=v;
-      add3D(k==="front"?0:k==="left"?-30:30,v);
-    }
+  updatePose();
+
+  Object.keys(ANGLES).forEach(k=>{
+    const d=filter(k,j[k]);
+    if(!d) return;
+
+    const a=pose.theta+ANGLES[k]*Math.PI/180;
+    const wx=pose.x+d*Math.cos(a);
+    const wy=pose.y+d*Math.sin(a);
+
+    worldPts.push({x:wx,y:wy});
+    add3D(wx,wy);
   });
 
-  statusEl.innerText="Live (filtered)";
+  statusEl.innerText="Mapping (pose)";
 };
-
-client.onConnectionLost=()=>statusEl.innerText="MQTT lost";
 
 client.connect({
   useSSL:true,
   onSuccess:()=>{
     statusEl.innerText="Connected";
     client.subscribe("neerdrishti/sonar/map");
-  },
-  onFailure:()=>statusEl.innerText="MQTT failed"
+  }
 });
 
+/* Watchdog */
 setInterval(()=>{
   if(Date.now()-lastMsg>3000)
     statusEl.innerText="No data";
 },1000);
-</script>
 
+</script>
 </body>
 </html>
