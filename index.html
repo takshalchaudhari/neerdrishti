@@ -1,38 +1,149 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – Live Data</title>
+<title>Neerdrishti – 2D + 3D Mapping</title>
+
+<!-- MQTT -->
 <script src="paho-mqtt.js"></script>
+
+<!-- THREE.JS (MODERN, SUPPORTED) -->
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.155.0/build/three.module.js";
+import { OrbitControls } from "https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js";
+
+window.THREE = THREE;
+window.OrbitControls = OrbitControls;
+</script>
 
 <style>
 body{
+  margin:0;
   background:#050d12;
   color:#0f0;
   font-family:monospace;
   text-align:center;
 }
+#top{padding:10px}
+canvas{background:#021;border-radius:8px}
+#panels{display:flex;flex-wrap:wrap;justify-content:center}
 #status{color:#ff0}
-#data{font-size:18px;margin-top:20px}
 </style>
 </head>
 
 <body>
 
-<h2>Neerdrishti – MQTT Live Monitor</h2>
-<p id="status">Connecting to MQTT…</p>
-
-<div id="data">
-Front: <span id="f">--</span><br>
-Left: <span id="l">--</span><br>
+<div id="top">
+<h2>Neerdrishti – Live 2D + 3D Sonar Mapping</h2>
+<p id="status">Connecting…</p>
+Front: <span id="f">--</span> |
+Left: <span id="l">--</span> |
 Right: <span id="r">--</span>
 </div>
 
-<script>
-const statusEl = document.getElementById("status");
-let lastMsg = 0;
+<div id="panels">
+  <canvas id="radar" width="400" height="400"></canvas>
+  <canvas id="map" width="400" height="250"></canvas>
+  <div id="three" style="width:420px;height:420px"></div>
+</div>
 
-// ⚠️ PUBLIC SUBSCRIBER ONLY (NO CREDENTIALS HERE)
+<script type="module">
+/* ================== STATE ================== */
+let data = {front:0,left:0,right:0};
+let lastMsg = 0;
+let sweep = 0;
+
+/* ================== 2D CANVAS ================== */
+const radar = document.getElementById("radar").getContext("2d");
+const map = document.getElementById("map").getContext("2d");
+
+function polar(a,d){
+  const r = a*Math.PI/180;
+  return {x:d*Math.cos(r), y:d*Math.sin(r)};
+}
+
+/* ================== 2D DRAW ================== */
+function draw2D(){
+  radar.fillStyle="rgba(0,0,0,0.25)";
+  radar.fillRect(0,0,400,400);
+
+  radar.strokeStyle="#0f0";
+  radar.beginPath();
+  radar.arc(200,200,180,0,Math.PI*2);
+  radar.stroke();
+
+  sweep += 0.04;
+  radar.beginPath();
+  radar.moveTo(200,200);
+  radar.lineTo(200+180*Math.cos(sweep),200+180*Math.sin(sweep));
+  radar.stroke();
+
+  [["left",-30],["front",0],["right",30]].forEach(s=>{
+    const p = polar(s[1],data[s[0]]);
+    radar.fillRect(200+p.x/2,200+p.y/2,6,6);
+  });
+
+  map.fillStyle="#011";
+  map.fillRect(0,0,400,250);
+
+  [["left",-30],["front",0],["right",30]].forEach(s=>{
+    const p = polar(s[1],data[s[0]]);
+    map.fillRect(200+p.x/2,240-p.y/2,6,6);
+  });
+
+  requestAnimationFrame(draw2D);
+}
+draw2D();
+
+/* ================== 3D SETUP ================== */
+const container = document.getElementById("three");
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x020a0f);
+
+const camera = new THREE.PerspectiveCamera(
+  60, container.clientWidth/container.clientHeight, 1, 2000
+);
+camera.position.set(0,120,220);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(container.clientWidth,container.clientHeight);
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera,renderer.domElement);
+controls.enableDamping = true;
+
+/* Grid */
+scene.add(new THREE.GridHelper(400,20,0x00ff00,0x003300));
+
+/* Points */
+const geom = new THREE.BufferGeometry();
+let points = [];
+const mat = new THREE.PointsMaterial({color:0x00ff00,size:4});
+const cloud = new THREE.Points(geom,mat);
+scene.add(cloud);
+
+function addPoint(angle,dist){
+  const r = angle*Math.PI/180;
+  points.push(
+    dist*Math.cos(r),
+    0,
+    -dist*Math.sin(r)
+  );
+  geom.setAttribute("position",
+    new THREE.Float32BufferAttribute(points,3));
+}
+
+/* 3D render loop */
+function render3D(){
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(render3D);
+}
+render3D();
+
+/* ================== MQTT ================== */
+const statusEl = document.getElementById("status");
+
 const client = new Paho.Client(
   "4d679eb8c29c4e029130d4045c0c1a2e.s1.eu.hivemq.cloud",
   8884,
@@ -40,38 +151,40 @@ const client = new Paho.Client(
   "web_"+Math.random().toString(16).slice(2)
 );
 
-client.onConnectionLost = () => {
-  statusEl.innerText = "MQTT connection lost";
+client.onMessageArrived = m=>{
+  const j = JSON.parse(m.payloadString);
+  data = j;
+  lastMsg = Date.now();
+
+  f.innerText=j.front;
+  l.innerText=j.left;
+  r.innerText=j.right;
+  statusEl.innerText="Live data";
+
+  addPoint(0,j.front);
+  addPoint(-30,j.left);
+  addPoint(30,j.right);
 };
 
-client.onMessageArrived = m => {
-  try{
-    const j = JSON.parse(m.payloadString);
-    f.innerText = j.front;
-    l.innerText = j.left;
-    r.innerText = j.right;
-    lastMsg = Date.now();
-    statusEl.innerText = "Receiving live data";
-  }catch(e){
-    console.log("Bad JSON", e);
-  }
+client.onConnectionLost = ()=>{
+  statusEl.innerText="MQTT disconnected";
 };
 
 client.connect({
   useSSL:true,
   onSuccess:()=>{
-    statusEl.innerText = "Connected. Waiting for data…";
+    statusEl.innerText="Connected, waiting…";
     client.subscribe("neerdrishti/sonar/map");
   },
   onFailure:()=>{
-    statusEl.innerText = "MQTT connection failed";
+    statusEl.innerText="MQTT failed";
   }
 });
 
-// watchdog
+/* Watchdog */
 setInterval(()=>{
-  if(Date.now() - lastMsg > 3000){
-    statusEl.innerText = "No data received";
+  if(Date.now()-lastMsg>3000){
+    statusEl.innerText="No data received";
   }
 },1000);
 </script>
