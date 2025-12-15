@@ -6,15 +6,14 @@
 
 <script src="paho-mqtt.js"></script>
 
-<script type="module">
-import * as THREE from "https://unpkg.com/three@0.155.0/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js";
-window.THREE = THREE;
-window.OrbitControls = OrbitControls;
-</script>
-
 <style>
-body{margin:0;background:#050d12;color:#0f0;font-family:monospace;text-align:center}
+body{
+  margin:0;
+  background:#050d12;
+  color:#0f0;
+  font-family:monospace;
+  text-align:center;
+}
 canvas{background:#021;border-radius:8px}
 #panels{display:flex;flex-wrap:wrap;justify-content:center}
 #status{color:#ff0}
@@ -32,79 +31,62 @@ canvas{background:#021;border-radius:8px}
 </div>
 
 <script type="module">
+/* ================= IMPORTS ================= */
+import * as THREE from "https://unpkg.com/three@0.155.0/build/three.module.js";
+import { OrbitControls } from "https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js";
+
 /* ================= CONFIG ================= */
-
-// Motion model (simulated)
-const FORWARD_SPEED = 0.02;   // meters per update
-const TURN_RATE     = 0.002;  // radians per update
-
-// Sensor angles
+const FORWARD_SPEED = 0.02;
+const TURN_RATE = 0.002;
 const ANGLES = {front:0,left:-30,right:30};
-
-// Calibration
-const CAL = {front:0,left:0,right:0};
-
-// Filtering
-const MIN_CM = 20;
-const MAX_CM = 300;
+const MIN_CM = 20, MAX_CM = 300;
 const MEDIAN_WINDOW = 5;
 const EMA_ALPHA = 0.35;
 
 /* ================= STATE ================= */
-
 let pose = {x:0,y:0,theta:0};
-let history={front:[],left:[],right:[]};
+let hist={front:[],left:[],right:[]};
 let ema={front:0,left:0,right:0};
 let lastMsg=0;
+const worldPts=[];
 
 /* ================= FILTER ================= */
-
-function median(a){return [...a].sort((x,y)=>x-y)[Math.floor(a.length/2)]}
-
-function filter(name,v){
-  v+=CAL[name];
+function median(a){
+  return [...a].sort((x,y)=>x-y)[Math.floor(a.length/2)];
+}
+function filter(k,v){
   if(v<MIN_CM||v>MAX_CM) return null;
-  history[name].push(v);
-  if(history[name].length>MEDIAN_WINDOW) history[name].shift();
-  if(history[name].length<MEDIAN_WINDOW) return null;
-  const m=median(history[name]);
-  ema[name]=ema[name]?EMA_ALPHA*m+(1-EMA_ALPHA)*ema[name]:m;
-  return ema[name]/100; // convert cm → meters
+  hist[k].push(v);
+  if(hist[k].length>MEDIAN_WINDOW) hist[k].shift();
+  if(hist[k].length<MEDIAN_WINDOW) return null;
+  const m=median(hist[k]);
+  ema[k]=ema[k]?EMA_ALPHA*m+(1-EMA_ALPHA)*ema[k]:m;
+  return ema[k]/100;
 }
 
-/* ================= POSE UPDATE ================= */
-
+/* ================= POSE ================= */
 function updatePose(){
-  pose.x += FORWARD_SPEED*Math.cos(pose.theta);
-  pose.y += FORWARD_SPEED*Math.sin(pose.theta);
-  pose.theta += TURN_RATE;
+  pose.x+=FORWARD_SPEED*Math.cos(pose.theta);
+  pose.y+=FORWARD_SPEED*Math.sin(pose.theta);
+  pose.theta+=TURN_RATE;
 }
 
 /* ================= 2D MAP ================= */
-
 const map=document.getElementById("map").getContext("2d");
-const worldPts=[];
-
 function drawMap(){
   map.fillStyle="#011";
   map.fillRect(0,0,420,300);
-
-  // draw points
   map.fillStyle="#0f0";
   worldPts.forEach(p=>{
     map.fillRect(210+p.x*20,150-p.y*20,3,3);
   });
-
-  // draw robot
   map.fillStyle="#f00";
   map.fillRect(210+pose.x*20,150-pose.y*20,6,6);
-
   requestAnimationFrame(drawMap);
 }
 drawMap();
 
 /* ================= 3D ================= */
-
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x020a0f);
 
@@ -139,7 +121,6 @@ function render3D(){
 render3D();
 
 /* ================= MQTT ================= */
-
 const statusEl=document.getElementById("status");
 
 const client=new Paho.Client(
@@ -150,17 +131,14 @@ const client=new Paho.Client(
 client.onMessageArrived=m=>{
   const j=JSON.parse(m.payloadString);
   lastMsg=Date.now();
-
   updatePose();
 
   Object.keys(ANGLES).forEach(k=>{
     const d=filter(k,j[k]);
     if(!d) return;
-
     const a=pose.theta+ANGLES[k]*Math.PI/180;
     const wx=pose.x+d*Math.cos(a);
     const wy=pose.y+d*Math.sin(a);
-
     worldPts.push({x:wx,y:wy});
     add3D(wx,wy);
   });
@@ -176,7 +154,6 @@ client.connect({
   }
 });
 
-/* Watchdog */
 setInterval(()=>{
   if(Date.now()-lastMsg>3000)
     statusEl.innerText="No data";
