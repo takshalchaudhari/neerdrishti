@@ -1,10 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – Pose-Based Mapping</title>
+<title>Neerdrishti – Pose Mapping (Stable)</title>
 
+<!-- MQTT -->
 <script src="paho-mqtt.js"></script>
+
+<!-- THREE (CLASSIC BUILD – STABLE) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
 
 <style>
 body{
@@ -22,7 +27,7 @@ canvas{background:#021;border-radius:8px}
 
 <body>
 
-<h2>Neerdrishti – Phase 3-2 (Pose Estimation)</h2>
+<h2>Neerdrishti – Phase 3-2 (Pose Mapping)</h2>
 <p id="status">Connecting…</p>
 
 <div id="panels">
@@ -30,11 +35,7 @@ canvas{background:#021;border-radius:8px}
   <div id="three" style="width:420px;height:420px"></div>
 </div>
 
-<script type="module">
-/* ================= IMPORTS ================= */
-import * as THREE from "https://unpkg.com/three@0.155.0/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js";
-
+<script>
 /* ================= CONFIG ================= */
 const FORWARD_SPEED = 0.02;
 const TURN_RATE = 0.002;
@@ -76,12 +77,15 @@ const map=document.getElementById("map").getContext("2d");
 function drawMap(){
   map.fillStyle="#011";
   map.fillRect(0,0,420,300);
+
   map.fillStyle="#0f0";
   worldPts.forEach(p=>{
     map.fillRect(210+p.x*20,150-p.y*20,3,3);
   });
+
   map.fillStyle="#f00";
   map.fillRect(210+pose.x*20,150-pose.y*20,6,6);
+
   requestAnimationFrame(drawMap);
 }
 drawMap();
@@ -97,7 +101,7 @@ const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(420,420);
 document.getElementById("three").appendChild(renderer.domElement);
 
-const controls=new OrbitControls(camera,renderer.domElement);
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;
 
 scene.add(new THREE.GridHelper(20,20,0x00ff00,0x003300));
@@ -158,7 +162,7 @@ setInterval(()=>{
   if(Date.now()-lastMsg>3000)
     statusEl.innerText="No data";
 },1000);
-
 </script>
+
 </body>
 </html>
