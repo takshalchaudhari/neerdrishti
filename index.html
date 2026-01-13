@@ -7,9 +7,9 @@
 <!-- MQTT -->
 <script src="paho-mqtt.js"></script>
 
-<!-- THREE (CLASSIC BUILD – STABLE) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
+<!-- THREE.JS (LOCKED, COMPATIBLE VERSIONS) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/controls/OrbitControls.js"></script>
 
 <style>
 body{
@@ -36,7 +36,7 @@ canvas{background:#021;border-radius:8px}
 </div>
 
 <script>
-/* ===== CONFIG ===== */
+/* ================= CONFIG ================= */
 const FORWARD_SPEED = 0.02;
 const TURN_RATE = 0.002;
 const ANGLES = {front:0,left:-30,right:30};
@@ -44,14 +44,14 @@ const MIN_CM = 20, MAX_CM = 300;
 const MEDIAN_WINDOW = 5;
 const EMA_ALPHA = 0.35;
 
-/* ===== STATE ===== */
+/* ================= STATE ================= */
 let pose = {x:0,y:0,theta:0};
 let hist={front:[],left:[],right:[]};
 let ema={front:0,left:0,right:0};
 let lastMsg=0;
 const worldPts=[];
 
-/* ===== FILTER ===== */
+/* ================= FILTER ================= */
 function median(a){
   return [...a].sort((x,y)=>x-y)[Math.floor(a.length/2)];
 }
@@ -65,14 +65,14 @@ function filter(k,v){
   return ema[k]/100;
 }
 
-/* ===== POSE ===== */
+/* ================= POSE ================= */
 function updatePose(){
   pose.x+=FORWARD_SPEED*Math.cos(pose.theta);
   pose.y+=FORWARD_SPEED*Math.sin(pose.theta);
   pose.theta+=TURN_RATE;
 }
 
-/* ===== 2D MAP ===== */
+/* ================= 2D MAP ================= */
 const map=document.getElementById("map").getContext("2d");
 function drawMap(){
   map.fillStyle="#011";
@@ -90,7 +90,7 @@ function drawMap(){
 }
 drawMap();
 
-/* ===== 3D ===== */
+/* ================= 3D ================= */
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x020a0f);
 
@@ -124,12 +124,14 @@ function render3D(){
 }
 render3D();
 
-/* ===== MQTT ===== */
+/* ================= MQTT ================= */
 const statusEl=document.getElementById("status");
 
 const client=new Paho.Client(
   "4d679eb8c29c4e029130d4045c0c1a2e.s1.eu.hivemq.cloud",
-  8884,"/mqtt","web_"+Math.random().toString(16).slice(2)
+  8884,
+  "/mqtt",
+  "web_"+Math.random().toString(16).slice(2)
 );
 
 client.onMessageArrived=m=>{
@@ -150,17 +152,25 @@ client.onMessageArrived=m=>{
   statusEl.innerText="Mapping (pose)";
 };
 
+client.onConnectionLost=()=>{
+  statusEl.innerText="MQTT disconnected";
+};
+
 client.connect({
   useSSL:true,
   onSuccess:()=>{
     statusEl.innerText="Connected";
     client.subscribe("neerdrishti/sonar/map");
+  },
+  onFailure:()=>{
+    statusEl.innerText="MQTT failed";
   }
 });
 
 setInterval(()=>{
-  if(Date.now()-lastMsg>3000)
+  if(Date.now()-lastMsg>3000){
     statusEl.innerText="No data";
+  }
 },1000);
 </script>
 
