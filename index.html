@@ -2,14 +2,13 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Neerdrishti – Pose Mapping (Stable)-REVISED</title>
+<title>Neerdrishti – Pose Mapping (Stable)</title>
 
 <!-- MQTT -->
 <script src="paho-mqtt.js"></script>
 
-<!-- THREE.JS (LOCKED, COMPATIBLE VERSIONS) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/controls/OrbitControls.js"></script>
+<!-- THREE (CORE ONLY) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 
 <style>
 body{
@@ -101,9 +100,6 @@ const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(420,420);
 document.getElementById("three").appendChild(renderer.domElement);
 
-const controls=new THREE.OrbitControls(camera,renderer.domElement);
-controls.enableDamping=true;
-
 scene.add(new THREE.GridHelper(20,20,0x00ff00,0x003300));
 
 const geom=new THREE.BufferGeometry();
@@ -117,8 +113,23 @@ function add3D(x,y){
   geom.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
 }
 
+/* ===== SIMPLE MOUSE CONTROLS (NO ORBITCONTROLS) ===== */
+let isDown=false, lx=0, ly=0;
+renderer.domElement.onmousedown=e=>{isDown=true; lx=e.clientX; ly=e.clientY};
+renderer.domElement.onmouseup=()=>isDown=false;
+renderer.domElement.onmousemove=e=>{
+  if(!isDown) return;
+  const dx=e.clientX-lx;
+  const dy=e.clientY-ly;
+  camera.rotation.y -= dx*0.005;
+  camera.rotation.x -= dy*0.005;
+  lx=e.clientX; ly=e.clientY;
+};
+renderer.domElement.onwheel=e=>{
+  camera.position.z += e.deltaY*0.01;
+};
+
 function render3D(){
-  controls.update();
   renderer.render(scene,camera);
   requestAnimationFrame(render3D);
 }
@@ -152,18 +163,11 @@ client.onMessageArrived=m=>{
   statusEl.innerText="Mapping (pose)";
 };
 
-client.onConnectionLost=()=>{
-  statusEl.innerText="MQTT disconnected";
-};
-
 client.connect({
   useSSL:true,
   onSuccess:()=>{
     statusEl.innerText="Connected";
     client.subscribe("neerdrishti/sonar/map");
-  },
-  onFailure:()=>{
-    statusEl.innerText="MQTT failed";
   }
 });
 
